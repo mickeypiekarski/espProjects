@@ -14,7 +14,9 @@ A collection of projects for the **ESP32 Cheap Yellow Display (CYD)** — an ESP
 | Folder | Description |
 |--------|-------------|
 | `subway_project/` | NYC subway arrival boards for various stops (G train Greenpoint, A/C Utica Av), plus a Dodgers score panel and a cycling news ticker |
-| `shared/ota_update/` | Reusable OTA-update helper + multi-mode board template (see [CLAUDE.md](CLAUDE.md#ota-updates)) — new boards remote-update over WiFi via GitHub Releases instead of requiring a USB re-flash |
+| `installer/` | The only firmware ever flashed over USB — lets a friend pick a board type from a web page and OTA-installs that type's binary (see [CLAUDE.md](CLAUDE.md#ota-updates)) |
+| `subway_board/` | Standalone G-train arrivals board — installable via `installer/`, self-updates over WiFi |
+| `shared/ota_update/` | Reusable OTA-update helper + standalone board-type template — new board types remote-update over WiFi via GitHub Releases instead of requiring a USB re-flash |
 
 ## Architecture
 

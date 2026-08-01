@@ -52,20 +52,36 @@ Two patterns in use across sketches:
 
 ## OTA updates
 
-New boards should support remote firmware updates instead of requiring a USB
-re-flash. `shared/ota_update/` has the reusable pieces:
+Boards are **sold** — each physical unit gets exactly one USB flash, ever.
+After that it must be fully remote-manageable, including being told what
+*type* of board it is. The architecture:
 
-- `ota_update.h` — GitHub-Releases-backed OTA checker/updater, copy into each
-  board's sketch folder (don't relative-`#include` across folders — Arduino
-  IDE doesn't reliably resolve that)
-- `board_template.ino.example` — scaffold for new boards: WiFiManager setup
-  → OTA check → on-device mode-picker web page → mode dispatch
-- `README.md` — setup checklist and how to cut a release
+- **`installer/`** — the only firmware ever flashed over USB. WiFiManager
+  setup → self-OTA check → web page listing available board types (fetched
+  from `manifest.json` in the latest release, not hardcoded) → picking one
+  downloads and flashes that type's own binary, then reboots into it.
+- **Standalone per-board-type sketches** (`subway_board/`, future
+  `surf_board/`, `weather_board/`, ...) — each is a complete, independent
+  binary with its own `FW_VERSION_CODE` and its own OTA check scoped to its
+  own named release asset. No in-binary mode picker; the board type *is* the
+  binary.
+- **`shared/ota_update/`** — the reusable pieces:
+  - `ota_update.h` — GitHub-Releases-backed OTA helper, copy into each
+    board's sketch folder (don't relative-`#include` across folders —
+    Arduino IDE doesn't reliably resolve that). Provides
+    `checkForOTAUpdate(assetFilename, cb)` (version-gated self-update against
+    a named asset), `otaFlashAsset(assetFilename, cb)` (unconditional flash —
+    what the installer uses), and `otaFetchManifest(doc)`.
+  - `board_template.ino.example` — scaffold for a new standalone board type.
+  - `README.md` — setup checklist, how to cut a release, the `manifest.json`
+    convention, and the installer's design.
 
-One firmware binary serves all board "modes" (subway, surf, weather, ...);
-the active mode is chosen via a web page on the device and stored in
-`Preferences`, not selected via separate per-mode binaries. Releases are
-tagged `vX.Y.Z` on GitHub (repo: espProjects) with a single `.bin` asset.
+Releases are tagged `vX.Y.Z` on GitHub (repo: espProjects) and can carry
+**multiple named `.bin` assets at once** (one per board type currently being
+updated, named `<board_name>.bin`) plus a `manifest.json` asset listing
+`{name, asset}` pairs for every currently-installable board type. Adding a
+brand-new board type is purely a release-side change — no installer
+re-flash, ever, even for installers already sold and in someone's hands.
 
 **Arduino IDE → Tools → Partition Scheme must be OTA-capable** (two app
 partitions) for any board using this — a per-machine manual setting, not
@@ -75,9 +91,37 @@ something the code can enforce.
 unauthenticated (no token baked into firmware, by design — see
 "Known limitations" in `shared/ota_update/README.md`), and GitHub's
 unauthenticated API 404s on private repos indistinguishably from "no
-releases." The repo must stay public for OTA to keep working. End-to-end
-tested 2026-08-01: v1.0.0 → v1.0.1 self-update over WiFi confirmed on
-physical hardware.
+releases." The repo must stay public for OTA to keep working. The underlying
+OTA mechanics (redirect-follow, insecure TLS, integer version compare) were
+hardware-validated 2026-08-01 (v1.0.0 → v1.0.1 self-update over WiFi) under
+the earlier one-binary/mode-picker design; the installer + per-board-type
+flow built on top of those same mechanics has not yet been hardware-tested
+end-to-end.
+
+## TODO: flash headroom is tighter than expected
+
+Splitting into per-board-type binaries (installer + `subway_board`, etc.)
+fixed the architectural problem — a board no longer carries other board
+types' code — but did **not** free up much flash. Compiled via `arduino-cli`
+against `esp32:esp32:esp32` (Default 4MB with spiffs, 1.25MB per app
+partition):
+- `subway_board/` — 95% full (1,251,420 / 1,310,720 bytes)
+- `installer/` — 94% full (1,241,132 / 1,310,720 bytes), despite having
+  almost no board-specific logic
+
+`nm -S --size-sort` on the compiled `.elf` shows the bulk is fixed overhead
+from the WiFi/TLS/lwIP stack itself (`mbedtls_ssl_handshake_*`, `tcp_input`,
+WebServer request parsing, etc.) — cost every board pays just for using
+WiFiManager + HTTPS OTA + WebServer, largely independent of board-specific
+logic size. Realistic headroom for a single board's own code is more like
+~60–70KB, not the "well under 95%" the per-binary split was expected to buy.
+
+**Revisit before building heavier board types** (more graphics, more
+sensors, bigger data tables than the 12-station G-line list): look at a
+partition scheme with a larger app slot (4MB flash isn't otherwise close to
+full — SPIFFS/FATFS space is going mostly unused) or trimming library
+footprint (e.g. dropping WiFiManager's captive-portal HTML/JS if it's ever
+swappable for something lighter).
 
 ## Conventions
 

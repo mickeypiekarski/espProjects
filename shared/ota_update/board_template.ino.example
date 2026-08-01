@@ -1,16 +1,33 @@
 // board_template.ino.example
 //
-// Starting point for a new CYD board sketch: WiFi setup (WiFiManager) ->
-// OTA update check -> on-device mode picker -> mode dispatch.
+// Starting point for a new STANDALONE board-type sketch: WiFi setup
+// (WiFiManager) -> OTA update check (scoped to this board's own release
+// asset) -> board logic.
 //
-// To start a new board:
+// This produces ONE STANDALONE BINARY for one board type — not a picker with
+// multiple modes baked in. A friend chooses their board type once, via the
+// installer/ sketch's web picker, which downloads and flashes the matching
+// named .bin. Boards never contain code for board types they aren't running.
+//
+// To start a new board type:
 //   1. Copy this file into espProjects/<board_name>/<board_name>.ino
+//      (e.g. espProjects/surf_board/surf_board.ino)
 //   2. Copy shared/ota_update/ota_update.h into the same folder
-//   3. Set BOARD_NAME, MDNS_HOSTNAME, and FW_VERSION_CODE below
-//   4. Add a mode_<name>.h per mode (see the two stubs below) and register
-//      it in setupModes()/loopMode()
+//   3. Set BOARD_NAME, MDNS_HOSTNAME, FW_VERSION_CODE (start at 10000 for
+//      v1.0.0), and BOARD_ASSET_NAME below. Convention: BOARD_ASSET_NAME is
+//      "<board_name>.bin", matching the folder/sketch name.
+//   4. Replace setupBoard()/loopBoard() with your board's real logic (web
+//      UI for any on-device config it needs, Preferences for persisted
+//      state, whatever the board actually does).
 //   5. In Arduino IDE: Tools > Partition Scheme, pick an OTA-capable scheme
 //      (see shared/ota_update/README.md — this is a per-machine manual step)
+//   6. When cutting a release: export this board's .bin, attach it under
+//      BOARD_ASSET_NAME, and add/update an entry for it in that release's
+//      manifest.json so it's selectable from the installer. See
+//      shared/ota_update/README.md for the full release-cutting steps.
+//      NOTE: this is a manifest.json update, not an installer re-flash —
+//      installers already out in the field pick up new board types
+//      automatically the next time someone loads their picker page.
 
 #include <WiFi.h>
 #include <WiFiManager.h>
@@ -19,32 +36,19 @@
 #include <TFT_eSPI.h>
 #include <ESPmDNS.h>
 
-#define BOARD_NAME "BoardTemplate"      // AP name becomes "<BOARD_NAME>-Setup"
-#define MDNS_HOSTNAME "boardtemplate"    // reachable at http://<MDNS_HOSTNAME>.local — lowercase, no spaces
-#define FW_VERSION_CODE 10000            // v1.0.0 — bump on every release
+#define BOARD_NAME "BoardTemplate"        // AP name becomes "<BOARD_NAME>-Setup"
+#define MDNS_HOSTNAME "boardtemplate"      // reachable at http://<MDNS_HOSTNAME>.local — lowercase, no spaces
+#define FW_VERSION_CODE 10000              // v1.0.0 — bump on every release
+#define BOARD_ASSET_NAME "boardtemplate.bin"  // matches the .bin name attached to releases
 
 #include "ota_update.h"
 
 TFT_eSPI tft = TFT_eSPI();
 WiFiManager wifiManager;
-WebServer modeServer(80);
+WebServer webServer(80);
 Preferences prefs;
 
 unsigned long lastOtaCheck = 0;
-
-// ---- Modes -----------------------------------------------------------
-// Each mode gets its own header with setup_<mode>() / loop_<mode>().
-// Real boards: replace these two stubs with e.g. mode_subway.h, mode_surf.h.
-
-enum BoardMode { MODE_NONE = 0, MODE_DEMO_A = 1, MODE_DEMO_B = 2 };
-
-void setup_demoA() { tft.fillScreen(TFT_BLACK); tft.setCursor(10, 10); tft.println("Mode: Demo A"); }
-void loop_demoA() {}
-
-void setup_demoB() { tft.fillScreen(TFT_BLACK); tft.setCursor(10, 10); tft.println("Mode: Demo B"); }
-void loop_demoB() {}
-
-BoardMode activeMode = MODE_NONE;
 
 void showMessage(const char* line1, const char* line2) {
   tft.fillScreen(TFT_BLACK);
@@ -54,36 +58,25 @@ void showMessage(const char* line1, const char* line2) {
   tft.println(line2);
 }
 
-// ---- Mode picker web UI ----------------------------------------------
+// ---- Replace these with your board's actual logic ----------------------
+// Real boards: draw something, register any web routes this board needs
+// (e.g. a config picker like subway_board's station list) before
+// webServer.begin() runs in setup(), and read/write Preferences under a
+// namespace scoped to this board.
 
-void handleModeRoot() {
-  String page = "<html><body><h2>" BOARD_NAME "</h2><ul>"
-                "<li><a href=\"/set?mode=1\">Demo A</a></li>"
-                "<li><a href=\"/set?mode=2\">Demo B</a></li>"
-                "</ul></body></html>";
-  modeServer.send(200, "text/html", page);
+void setupBoard() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setCursor(10, 10);
+  tft.println("Hello, " BOARD_NAME);
 }
 
-void handleModeSet() {
-  int mode = modeServer.arg("mode").toInt();
-  prefs.begin("board", false);
-  prefs.putInt("mode", mode);
-  prefs.end();
-  modeServer.send(200, "text/html", "Mode saved. Rebooting...");
-  delay(500);
-  ESP.restart();
-}
+void loopBoard() {}
 
-void dispatchMode(BoardMode mode) {
-  switch (mode) {
-    case MODE_DEMO_A: setup_demoA(); break;
-    case MODE_DEMO_B: setup_demoB(); break;
-    default: showMessage("No mode set", "Visit http://" MDNS_HOSTNAME ".local"); break;
-  }
-}
+// --------------------------------------------------------------------------
 
 void setup() {
   Serial.begin(115200);
+  Serial.printf("Running FW_VERSION_CODE: %d\n", FW_VERSION_CODE);
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);
@@ -103,31 +96,20 @@ void setup() {
   }
 
   showMessage("Checking for", "updates...");
-  checkForOTAUpdate(showMessage);  // reboots device in-place if an update is applied
+  checkForOTAUpdate(BOARD_ASSET_NAME, showMessage);  // reboots device in-place if an update is applied
 
-  prefs.begin("board", true);
-  int savedMode = prefs.getInt("mode", MODE_NONE);
-  prefs.end();
-  activeMode = (BoardMode)savedMode;
+  webServer.begin();
 
-  modeServer.on("/", handleModeRoot);
-  modeServer.on("/set", handleModeSet);
-  modeServer.begin();
-
-  dispatchMode(activeMode);
+  setupBoard();
 }
 
 void loop() {
-  modeServer.handleClient();
+  webServer.handleClient();
 
   if (millis() - lastOtaCheck >= OTA_CHECK_INTERVAL_MS) {
     lastOtaCheck = millis();
-    checkForOTAUpdate(showMessage);
+    checkForOTAUpdate(BOARD_ASSET_NAME, showMessage);
   }
 
-  switch (activeMode) {
-    case MODE_DEMO_A: loop_demoA(); break;
-    case MODE_DEMO_B: loop_demoB(); break;
-    default: break;
-  }
+  loopBoard();
 }
