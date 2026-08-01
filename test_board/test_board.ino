@@ -6,7 +6,7 @@
 // To start a new board:
 //   1. Copy this file into espProjects/<board_name>/<board_name>.ino
 //   2. Copy shared/ota_update/ota_update.h into the same folder
-//   3. Set BOARD_NAME, MDNS_HOSTNAME, and FW_VERSION_CODE below
+//   3. Set BOARD_NAME and FW_VERSION_CODE below
 //   4. Add a mode_<name>.h per mode (see the two stubs below) and register
 //      it in setupModes()/loopMode()
 //   5. In Arduino IDE: Tools > Partition Scheme, pick an OTA-capable scheme
@@ -84,6 +84,7 @@ void dispatchMode(BoardMode mode) {
 
 void setup() {
   Serial.begin(115200);
+  Serial.printf("Running FW_VERSION_CODE: %d\n", FW_VERSION_CODE);
   tft.init();
   tft.setRotation(1);
   tft.fillScreen(TFT_BLACK);

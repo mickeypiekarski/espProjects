@@ -14,7 +14,13 @@ served by the device itself, no separate binary per board.
      parent includes (`#include "../shared/ota_update/ota_update.h"`), so
      each board folder needs its own copy. `shared/ota_update/` is the
      canonical source — re-copy `ota_update.h` here if it's ever updated.
-3. Set `BOARD_NAME` and `FW_VERSION_CODE` at the top of the sketch.
+3. Set `BOARD_NAME`, `MDNS_HOSTNAME`, and `FW_VERSION_CODE` at the top of the
+   sketch. Once WiFi is connected, the board is reachable at
+   `http://<MDNS_HOSTNAME>.local` — no need to find its IP via Serial/router.
+   `MDNS_HOSTNAME` must be lowercase with no spaces (e.g. `"subwayboard"`).
+   Most phones/laptops resolve `.local` automatically; a small minority of
+   older Android devices don't support mDNS and would need the raw IP
+   instead (visible over Serial as a fallback).
 4. Add a `mode_<name>.h` per mode you want the board to support (subway,
    surf, weather, ...), with `setup_<mode>()` / `loop_<mode>()` functions,
    and register it in the mode enum + `dispatchMode()`/`loop()` switch.
