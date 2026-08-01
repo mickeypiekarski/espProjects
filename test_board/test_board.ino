@@ -21,7 +21,7 @@
 
 #define BOARD_NAME "BoardTemplate"      // AP name becomes "<BOARD_NAME>-Setup"
 #define MDNS_HOSTNAME "boardtemplate"    // reachable at http://<MDNS_HOSTNAME>.local — lowercase, no spaces
-#define FW_VERSION_CODE 10000            // v1.0.0 — bump on every release
+#define FW_VERSION_CODE 10001            // v1.0.1 — bump on every release
 
 #include "ota_update.h"
 

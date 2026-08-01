@@ -71,6 +71,14 @@ tagged `vX.Y.Z` on GitHub (repo: espProjects) with a single `.bin` asset.
 partitions) for any board using this — a per-machine manual setting, not
 something the code can enforce.
 
+**This repo is public.** `ota_update.h` calls the GitHub Releases API
+unauthenticated (no token baked into firmware, by design — see
+"Known limitations" in `shared/ota_update/README.md`), and GitHub's
+unauthenticated API 404s on private repos indistinguishably from "no
+releases." The repo must stay public for OTA to keep working. End-to-end
+tested 2026-08-01: v1.0.0 → v1.0.1 self-update over WiFi confirmed on
+physical hardware.
+
 ## Conventions
 
 - One Arduino sketch (`.ino`) per project folder, folder name matches sketch name

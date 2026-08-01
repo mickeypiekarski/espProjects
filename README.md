@@ -49,6 +49,8 @@ The CYD sketches call the proxy over WiFi using `HTTPClient` and parse the respo
 
 > **OTA note:** boards using `shared/ota_update/` need an OTA-capable partition scheme (two app partitions). Verify "Default 4MB with spiffs" actually provides that on your installed core version before relying on it — see `shared/ota_update/README.md`.
 
+> **Repo visibility:** this repo is public because `shared/ota_update/` checks GitHub Releases unauthenticated (no token on the device) — that only works against public repos. Don't flip this to private without adding an auth token to the OTA flow first.
+
 ### Common Libraries
 
 - **TFT_eSPI** — display driver (configure `User_Setup.h` for ILI9341 + CYD pinout)

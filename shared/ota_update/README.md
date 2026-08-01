@@ -54,6 +54,12 @@ served by the device itself, no separate binary per board.
 
 ## Known limitations (deliberate, not oversights)
 
+- **Repo must stay public.** The version check hits the GitHub Releases API
+  unauthenticated (no token baked into firmware). Against a private repo
+  this 404s indistinguishably from "no releases exist" — no error, the
+  board just silently never updates. If this repo is ever made private,
+  the OTA flow needs a token added (and the "no extra auth" trust model
+  reconsidered).
 - **No TLS certificate validation** (`WiFiClientSecure::setInsecure()`).
   Keeps things simple for a personal project; would need revisiting if this
   pattern is ever reused somewhere security-sensitive.
