@@ -50,6 +50,27 @@ Two patterns in use across sketches:
 1. **Manual scan + touch keyboard** (`gtrain.ino`) — scans networks, shows scrollable list, on-screen keyboard for password, saves to `Preferences`
 2. **WiFiManager captive portal** (`utica_board.ino`, `g_train_board.ino`) — creates AP `"<BoardName>-Setup"`, user connects and visits `192.168.4.1`
 
+## OTA updates
+
+New boards should support remote firmware updates instead of requiring a USB
+re-flash. `shared/ota_update/` has the reusable pieces:
+
+- `ota_update.h` — GitHub-Releases-backed OTA checker/updater, copy into each
+  board's sketch folder (don't relative-`#include` across folders — Arduino
+  IDE doesn't reliably resolve that)
+- `board_template.ino.example` — scaffold for new boards: WiFiManager setup
+  → OTA check → on-device mode-picker web page → mode dispatch
+- `README.md` — setup checklist and how to cut a release
+
+One firmware binary serves all board "modes" (subway, surf, weather, ...);
+the active mode is chosen via a web page on the device and stored in
+`Preferences`, not selected via separate per-mode binaries. Releases are
+tagged `vX.Y.Z` on GitHub (repo: espProjects) with a single `.bin` asset.
+
+**Arduino IDE → Tools → Partition Scheme must be OTA-capable** (two app
+partitions) for any board using this — a per-machine manual setting, not
+something the code can enforce.
+
 ## Conventions
 
 - One Arduino sketch (`.ino`) per project folder, folder name matches sketch name

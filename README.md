@@ -14,6 +14,7 @@ A collection of projects for the **ESP32 Cheap Yellow Display (CYD)** — an ESP
 | Folder | Description |
 |--------|-------------|
 | `subway_project/` | NYC subway arrival boards for various stops (G train Greenpoint, A/C Utica Av), plus a Dodgers score panel and a cycling news ticker |
+| `shared/ota_update/` | Reusable OTA-update helper + multi-mode board template (see [CLAUDE.md](CLAUDE.md#ota-updates)) — new boards remote-update over WiFi via GitHub Releases instead of requiring a USB re-flash |
 
 ## Architecture
 
@@ -45,6 +46,8 @@ The CYD sketches call the proxy over WiFi using `HTTPClient` and parse the respo
 | Flash Size | 4MB |
 | Partition Scheme | Default 4MB with spiffs |
 | PSRAM | Disabled |
+
+> **OTA note:** boards using `shared/ota_update/` need an OTA-capable partition scheme (two app partitions). Verify "Default 4MB with spiffs" actually provides that on your installed core version before relying on it — see `shared/ota_update/README.md`.
 
 ### Common Libraries
 
