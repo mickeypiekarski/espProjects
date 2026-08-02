@@ -146,6 +146,39 @@ String urlEncode(const String& s) {
   return out;
 }
 
+// WebServer::arg() returns raw query-string values — it does not decode
+// percent-escapes or '+' back to spaces, so anything encoded via
+// urlEncode() above must be decoded again on the way back in.
+String urlDecode(const String& s) {
+  String out;
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (c == '+') {
+      out += ' ';
+    } else if (c == '%' && i + 2 < s.length()) {
+      char hex[3] = { s[i + 1], s[i + 2], 0 };
+      out += (char)strtol(hex, nullptr, 16);
+      i += 2;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+String pageHead(const String& title) {
+  return "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<style>body{font-family:sans-serif;background:#111;color:#eee;padding:16px}"
+    "a{display:block;padding:12px;margin-bottom:6px;background:#222;color:#eee;"
+    "text-decoration:none;border-radius:6px}a:hover{background:#333}"
+    "h2{color:#4ad}.sub{color:#888;font-size:0.85em}</style></head><body>"
+    "<h2>" + title + "</h2>";
+}
+
+// Step 1: area/city search (Open-Meteo Geocoding). Links each result to
+// /beaches instead of /save directly, since a city name alone is not
+// precise enough for a coastline — it's a population centroid, which can be
+// a mile or more from the actual water.
 void handleSearch() {
   if (!webServer.hasArg("q") || webServer.arg("q").length() == 0) {
     webServer.sendHeader("Location", "/", true);
@@ -160,12 +193,7 @@ void handleSearch() {
   JsonDocument doc;
   bool ok = fetchOpenMeteo(url, doc);
 
-  String page = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<style>body{font-family:sans-serif;background:#111;color:#eee;padding:16px}"
-    "a{display:block;padding:12px;margin-bottom:6px;background:#222;color:#eee;"
-    "text-decoration:none;border-radius:6px}a:hover{background:#333}"
-    "h2{color:#4ad}.sub{color:#888;font-size:0.85em}</style></head><body>"
-    "<h2>Results for \"" + query + "\"</h2>";
+  String page = pageHead("Results for \"" + query + "\"");
 
   if (!ok) {
     page += "<p>Search failed — check WiFi and try again.</p>";
@@ -181,8 +209,8 @@ void handleSearch() {
         float lat = r["latitude"] | 0.0f;
         float lon = r["longitude"] | 0.0f;
 
-        String label = name;
-        if (admin1.length() > 0) label += ", " + admin1;
+        String area = name;
+        if (admin1.length() > 0) area += ", " + admin1;
 
         String sub = admin1.length() > 0 ? admin1 : country;
         if (country.length() > 0 && admin1.length() > 0) sub += ", " + country;
@@ -192,11 +220,105 @@ void handleSearch() {
         snprintf(latStr, sizeof(latStr), "%.4f", lat);
         snprintf(lonStr, sizeof(lonStr), "%.4f", lon);
 
-        page += "<a href='/save?lat=" + String(latStr) + "&lon=" + String(lonStr) +
-                "&label=" + urlEncode(label) + "'>" + name +
+        page += "<a href='/beaches?lat=" + String(latStr) + "&amp;lon=" + String(lonStr) +
+                "&amp;area=" + urlEncode(area) + "'>" + name +
                 "<br><span class='sub'>" + sub + "</span></a>";
       }
     }
+  }
+  page += "</body></html>";
+
+  webServer.send(200, "text/html", page);
+}
+
+// Overpass QL body: named beach nodes within a small bbox around (lat, lon).
+// Overpass only performs well bounded to a small area — a nationwide name
+// search on this API takes 40s+ and isn't usable interactively, which is
+// exactly why this step only runs after step 1 has already narrowed things
+// down to a specific city/area.
+String buildOverpassQuery(float lat, float lon) {
+  char q[256];
+  const float DELTA = 0.15f;  // ~10-15mi depending on latitude
+  snprintf(q, sizeof(q),
+    "[out:json][timeout:15];node[\"natural\"=\"beach\"][\"name\"](%.4f,%.4f,%.4f,%.4f);out body;",
+    lat - DELTA, lon - DELTA, lat + DELTA, lon + DELTA);
+  return String(q);
+}
+
+bool fetchOverpassBeachesOnce(float lat, float lon, JsonDocument& doc) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  if (!http.begin(client, "https://overpass-api.de/api/interpreter")) return false;
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  String body = "data=" + urlEncode(buildOverpassQuery(lat, lon));
+  int code = http.POST(body);
+  bool ok = false;
+  if (code == HTTP_CODE_OK) {
+    String payload = http.getString();
+    ok = (deserializeJson(doc, payload) == DeserializationError::Ok);
+  }
+  http.end();
+  return ok;
+}
+
+// Overpass's free public instance occasionally 504s under load on an
+// otherwise-valid request (confirmed live: identical request failed, then
+// succeeded seconds later) — one retry meaningfully reduces how often a
+// real nearby beach gets missed due to a momentary server hiccup.
+bool fetchOverpassBeaches(float lat, float lon, JsonDocument& doc) {
+  if (fetchOverpassBeachesOnce(lat, lon, doc)) return true;
+  delay(1000);
+  return fetchOverpassBeachesOnce(lat, lon, doc);
+}
+
+// Step 2: look up named beaches near the step-1 area point. No match (or a
+// failed/slow Overpass request) falls back to saving the area point as-is —
+// deliberately non-blocking, so a real but less-mapped stretch of coast
+// never prevents finishing setup.
+void handleBeaches() {
+  if (!webServer.hasArg("lat") || !webServer.hasArg("lon") || !webServer.hasArg("area")) {
+    webServer.send(400, "text/plain", "Missing params");
+    return;
+  }
+  float lat = webServer.arg("lat").toFloat();
+  float lon = webServer.arg("lon").toFloat();
+  String area = urlDecode(webServer.arg("area"));
+
+  char latStr[16], lonStr[16];
+  snprintf(latStr, sizeof(latStr), "%.4f", lat);
+  snprintf(lonStr, sizeof(lonStr), "%.4f", lon);
+
+  JsonDocument doc;
+  bool ok = fetchOverpassBeaches(lat, lon, doc);
+  JsonArray elements = ok ? doc["elements"].as<JsonArray>() : JsonArray();
+
+  if (!ok || elements.size() == 0) {
+    String page = pageHead(ok ? "No named beach found nearby" : "Beach lookup unavailable");
+    if (!ok) page += "<p>The beach lookup service didn't respond — this can happen occasionally.</p>";
+    page += "<p>Using " + area + " instead.</p>";
+    page += "<a href='/save?lat=" + String(latStr) + "&amp;lon=" + String(lonStr) +
+            "&amp;label=" + urlEncode(area) + "'>Continue with " + area + "</a>";
+    webServer.send(200, "text/html", page);
+    return;
+  }
+
+  String page = pageHead("Beaches near " + area);
+  for (JsonObject el : elements) {
+    String beachName = el["tags"]["name"] | "";
+    if (beachName.length() == 0) continue;
+    float blat = el["lat"] | lat;
+    float blon = el["lon"] | lon;
+
+    char blatStr[16], blonStr[16];
+    snprintf(blatStr, sizeof(blatStr), "%.4f", blat);
+    snprintf(blonStr, sizeof(blonStr), "%.4f", blon);
+
+    String label = beachName + ", " + area;
+
+    page += "<a href='/save?lat=" + String(blatStr) + "&amp;lon=" + String(blonStr) +
+            "&amp;label=" + urlEncode(label) + "'>" + beachName + "</a>";
   }
   page += "</body></html>";
 
@@ -210,7 +332,7 @@ void handleSave() {
   }
   savedLat = webServer.arg("lat").toFloat();
   savedLon = webServer.arg("lon").toFloat();
-  savedName = webServer.arg("label");
+  savedName = urlDecode(webServer.arg("label"));
 
   prefs.begin("surf", false);
   prefs.putFloat("lat", savedLat);
@@ -394,6 +516,7 @@ void setup() {
 
   webServer.on("/", handlePickerRoot);
   webServer.on("/search", handleSearch);
+  webServer.on("/beaches", handleBeaches);
   webServer.on("/save", handleSave);
   webServer.begin();
 
