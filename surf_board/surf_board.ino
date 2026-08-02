@@ -1,10 +1,10 @@
 // surf_board.ino
 //
 // Standalone surf-conditions board. WiFiManager setup -> OTA check (scoped
-// to this board's own release asset) -> location search (Open-Meteo
-// Geocoding API, on-device, not a hardcoded list) -> live wave/wind
-// conditions (Open-Meteo Marine + Weather APIs), cycling between two
-// screens every ~6s. Data refreshes every 10 minutes.
+// to this board's own release asset) -> pick a spot from a baked-in list of
+// named US surf breaks -> live wave/wind conditions (Open-Meteo Marine +
+// Weather APIs), cycling between two screens every ~6s. Data refreshes
+// every 10 minutes.
 //
 // This is a complete, independent binary — not a mode inside a larger
 // picker. Boards become "a surf board" by being flashed with THIS file via
@@ -13,10 +13,16 @@
 // this was built from, and shared/ota_update/README.md for how to cut a
 // release with this board's .bin attached.
 //
-// Location picking is search-based, not a fixed list: this board is sold
-// nationwide, so a hardcoded spot table (like subway_board's 12-station
-// G-line array) can't scale. The board itself calls Open-Meteo's geocoding
-// API at setup time; only the resulting lat/lon is stored afterward.
+// Location picking is a baked-in spot table (SURF_SPOTS below), same
+// pattern as subway_board's station list — NOT live search. An earlier
+// version of this board chained Open-Meteo geocoding + OpenStreetMap
+// Overpass lookups to let users search any US location; that was dropped
+// because Overpass's free public instance is unreliable (confirmed live:
+// intermittent 504s on valid requests) and OSM's beach tagging doesn't
+// reliably cover well-known named breaks (e.g. Venice Beach). A curated
+// list has zero runtime dependency on any third-party lookup, so it can't
+// fail the way that live chain did — the tradeoff is v1 only covers the
+// ~80 spots below, not "any US coastline."
 
 #include <WiFi.h>
 #include <WiFiManager.h>
@@ -109,241 +115,118 @@ bool fetchOpenMeteo(const String& url, JsonDocument& doc) {
   return ok;
 }
 
-// ---- Location search web UI ---------------------------------------------
+// ---- Surf spot database (baked in, not live-searched) --------------------
+// Real named US surf breaks with coordinates at/near the actual break, not
+// city centroids. Add more spots here and bump FW_VERSION_CODE to ship an
+// update — same workflow as adding a subway_board station.
 
-String buildSearchPage() {
-  return "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
+struct SurfSpot { const char* name; float lat; float lon; };
+
+const SurfSpot SURF_SPOTS[] = {
+  // California
+  {"Malibu (First Point), CA", 34.0359, -118.6774},
+  {"Venice Beach, CA", 33.9850, -118.4695},
+  {"Manhattan Beach, CA", 33.8847, -118.4109},
+  {"Huntington Beach Pier, CA", 33.6553, -118.0053},
+  {"Trestles, CA", 33.3825, -117.5936},
+  {"Rincon, CA", 34.3708, -119.4772},
+  {"Santa Cruz - Steamer Lane, CA", 36.9513, -122.0247},
+  {"Mavericks, CA", 37.4947, -122.5008},
+  {"Ocean Beach, San Francisco, CA", 37.7600, -122.5107},
+  {"Pacifica - Linda Mar, CA", 37.5985, -122.5010},
+  {"Pismo Beach, CA", 35.1428, -120.6413},
+  {"San Onofre, CA", 33.3719, -117.5678},
+  {"Newport Beach, CA", 33.6057, -117.9298},
+  {"La Jolla Shores, CA", 32.8572, -117.2570},
+  {"Swami's, Encinitas, CA", 33.0300, -117.2914},
+  {"Windansea, La Jolla, CA", 32.8207, -117.2782},
+  {"Blacks Beach, La Jolla, CA", 32.8836, -117.2530},
+  {"Oceanside Pier, CA", 33.1959, -117.3795},
+  {"Sunset Cliffs, San Diego, CA", 32.7157, -117.2544},
+
+  // Hawaii
+  {"Pipeline, Oahu, HI", 21.6650, -158.0533},
+  {"Sunset Beach, Oahu, HI", 21.6753, -158.0397},
+  {"Waimea Bay, Oahu, HI", 21.6392, -158.0669},
+  {"Waikiki, Oahu, HI", 21.2761, -157.8278},
+  {"Honolua Bay, Maui, HI", 21.0089, -156.6425},
+  {"Hookipa Beach, Maui, HI", 20.9333, -156.3583},
+  {"Poipu Beach, Kauai, HI", 21.8721, -159.4573},
+
+  // New York / New Jersey
+  {"Rockaway Beach, Queens, NY", 40.5820, -73.8154},
+  {"Long Beach, NY", 40.5834, -73.6660},
+  {"Montauk, NY", 41.0362, -71.9509},
+  {"Lido Beach, NY", 40.5868, -73.6168},
+  {"Manasquan, NJ", 40.1043, -74.0332},
+  {"Belmar, NJ", 40.1793, -74.0121},
+  {"Long Beach Island, NJ", 39.6543, -74.1801},
+
+  // New England
+  {"Narragansett, RI", 41.4356, -71.4506},
+  {"Cape Cod - Nauset Beach, MA", 41.7590, -69.9578},
+  {"Wells Beach, ME", 43.3226, -70.5850},
+
+  // Florida / Gulf
+  {"Cocoa Beach, FL", 28.3200, -80.6076},
+  {"New Smyrna Beach, FL", 29.0258, -80.9270},
+  {"Sebastian Inlet, FL", 27.8597, -80.4478},
+  {"South Beach, Miami, FL", 25.7826, -80.1300},
+  {"Folly Beach, SC", 32.6551, -79.9403},
+  {"Wrightsville Beach, NC", 34.2085, -77.7967},
+  {"Outer Banks - Nags Head, NC", 35.9573, -75.6241},
+  {"Virginia Beach, VA", 36.8529, -75.9780},
+  {"Galveston, TX", 29.2477, -94.8536},
+  {"South Padre Island, TX", 26.0989, -97.1653},
+
+  // Pacific Northwest
+  {"Westport, WA", 46.8845, -124.1087},
+  {"Cannon Beach, OR", 45.8918, -123.9615},
+  {"Seaside, OR", 45.9932, -123.9226},
+  {"Pacific City, OR", 45.2032, -123.9576},
+};
+const int SURF_SPOT_COUNT = sizeof(SURF_SPOTS) / sizeof(SURF_SPOTS[0]);
+
+// ---- Spot picker web UI ---------------------------------------------------
+
+String buildPickerPage() {
+  String html = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
     "<style>body{font-family:sans-serif;background:#111;color:#eee;padding:16px}"
-    "input[type=text]{width:100%;padding:11px;font-size:1rem;border-radius:8px;"
-    "border:1px solid #444;background:#222;color:#eee;margin-bottom:10px}"
-    "button{padding:11px 20px;border-radius:8px;border:none;background:#04f;"
-    "color:#fff;font-size:1rem}"
+    "input{width:100%;padding:11px;font-size:1rem;border-radius:8px;border:1px solid #444;"
+    "background:#222;color:#eee;margin-bottom:10px}"
+    "a{display:block;padding:10px;margin-bottom:4px;background:#222;color:#eee;"
+    "text-decoration:none;border-radius:6px}a:hover{background:#333}"
     "h2{color:#4ad}</style></head><body>"
-    "<h2>Find your surf spot</h2>"
-    "<form method='get' action='/search'>"
-    "<input type='text' name='q' placeholder='e.g. Rockaway Beach' autofocus>"
-    "<button type='submit'>Search</button></form></body></html>";
+    "<h2>Pick your spot</h2>"
+    "<input type='text' id='f' placeholder='Filter...' oninput='"
+    "document.querySelectorAll(\"#list a\").forEach(a=>a.style.display="
+    "a.textContent.toLowerCase().includes(this.value.toLowerCase())?\"\":\"none\")'>"
+    "<div id='list'>";
+  for (int i = 0; i < SURF_SPOT_COUNT; i++) {
+    html += "<a href='/save?i=" + String(i) + "'>" + String(SURF_SPOTS[i].name) + "</a>";
+  }
+  html += "</div></body></html>";
+  return html;
 }
 
 void handlePickerRoot() {
-  webServer.send(200, "text/html", buildSearchPage());
-}
-
-String urlEncode(const String& s) {
-  String out;
-  for (size_t i = 0; i < s.length(); i++) {
-    char c = s[i];
-    if (isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~') {
-      out += c;
-    } else if (c == ' ') {
-      out += '+';
-    } else {
-      char buf[4];
-      snprintf(buf, sizeof(buf), "%%%02X", (unsigned char)c);
-      out += buf;
-    }
-  }
-  return out;
-}
-
-// WebServer::arg() returns raw query-string values — it does not decode
-// percent-escapes or '+' back to spaces, so anything encoded via
-// urlEncode() above must be decoded again on the way back in.
-String urlDecode(const String& s) {
-  String out;
-  for (size_t i = 0; i < s.length(); i++) {
-    char c = s[i];
-    if (c == '+') {
-      out += ' ';
-    } else if (c == '%' && i + 2 < s.length()) {
-      char hex[3] = { s[i + 1], s[i + 2], 0 };
-      out += (char)strtol(hex, nullptr, 16);
-      i += 2;
-    } else {
-      out += c;
-    }
-  }
-  return out;
-}
-
-String pageHead(const String& title) {
-  return "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<style>body{font-family:sans-serif;background:#111;color:#eee;padding:16px}"
-    "a{display:block;padding:12px;margin-bottom:6px;background:#222;color:#eee;"
-    "text-decoration:none;border-radius:6px}a:hover{background:#333}"
-    "h2{color:#4ad}.sub{color:#888;font-size:0.85em}</style></head><body>"
-    "<h2>" + title + "</h2>";
-}
-
-// Step 1: area/city search (Open-Meteo Geocoding). Links each result to
-// /beaches instead of /save directly, since a city name alone is not
-// precise enough for a coastline — it's a population centroid, which can be
-// a mile or more from the actual water.
-void handleSearch() {
-  if (!webServer.hasArg("q") || webServer.arg("q").length() == 0) {
-    webServer.sendHeader("Location", "/", true);
-    webServer.send(302, "text/plain", "");
-    return;
-  }
-  String query = webServer.arg("q");
-
-  String url = "https://geocoding-api.open-meteo.com/v1/search?name=" + urlEncode(query) +
-               "&count=5&language=en&format=json";
-
-  JsonDocument doc;
-  bool ok = fetchOpenMeteo(url, doc);
-
-  String page = pageHead("Results for \"" + query + "\"");
-
-  if (!ok) {
-    page += "<p>Search failed — check WiFi and try again.</p>";
-  } else {
-    JsonArray results = doc["results"].as<JsonArray>();
-    if (results.size() == 0) {
-      page += "<p>No matches for \"" + query + "\" — try a different search.</p>";
-    } else {
-      for (JsonObject r : results) {
-        String name = r["name"] | "";
-        String admin1 = r["admin1"] | "";
-        String country = r["country"] | "";
-        float lat = r["latitude"] | 0.0f;
-        float lon = r["longitude"] | 0.0f;
-
-        String area = name;
-        if (admin1.length() > 0) area += ", " + admin1;
-
-        String sub = admin1.length() > 0 ? admin1 : country;
-        if (country.length() > 0 && admin1.length() > 0) sub += ", " + country;
-        else if (country.length() > 0) sub = country;
-
-        char latStr[16], lonStr[16];
-        snprintf(latStr, sizeof(latStr), "%.4f", lat);
-        snprintf(lonStr, sizeof(lonStr), "%.4f", lon);
-
-        page += "<a href='/beaches?lat=" + String(latStr) + "&amp;lon=" + String(lonStr) +
-                "&amp;area=" + urlEncode(area) + "'>" + name +
-                "<br><span class='sub'>" + sub + "</span></a>";
-      }
-    }
-  }
-  page += "</body></html>";
-
-  webServer.send(200, "text/html", page);
-}
-
-// Overpass QL body: named beach nodes within a small bbox around (lat, lon).
-// Overpass only performs well bounded to a small area — a nationwide name
-// search on this API takes 40s+ and isn't usable interactively, which is
-// exactly why this step only runs after step 1 has already narrowed things
-// down to a specific city/area.
-// Beaches in OSM are tagged as either point nodes or polygon ways (the
-// outline of the beach area) — many real, named beaches (e.g. Santa
-// Monica-area's "Mother's Beach," "Will Rogers State Beach") only exist as
-// ways. Querying nodes alone silently misses them, so both are queried;
-// "out center" gives each way a single representative lat/lon.
-String buildOverpassQuery(float lat, float lon) {
-  char q[320];
-  const float DELTA = 0.15f;  // ~10-15mi depending on latitude
-  snprintf(q, sizeof(q),
-    "[out:json][timeout:15];("
-    "node[\"natural\"=\"beach\"][\"name\"](%.4f,%.4f,%.4f,%.4f);"
-    "way[\"natural\"=\"beach\"][\"name\"](%.4f,%.4f,%.4f,%.4f);"
-    ");out center;",
-    lat - DELTA, lon - DELTA, lat + DELTA, lon + DELTA,
-    lat - DELTA, lon - DELTA, lat + DELTA, lon + DELTA);
-  return String(q);
-}
-
-bool fetchOverpassBeachesOnce(float lat, float lon, JsonDocument& doc) {
-  if (WiFi.status() != WL_CONNECTED) return false;
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-  if (!http.begin(client, "https://overpass-api.de/api/interpreter")) return false;
-  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-  String body = "data=" + urlEncode(buildOverpassQuery(lat, lon));
-  int code = http.POST(body);
-  bool ok = false;
-  if (code == HTTP_CODE_OK) {
-    String payload = http.getString();
-    ok = (deserializeJson(doc, payload) == DeserializationError::Ok);
-  }
-  http.end();
-  return ok;
-}
-
-// Overpass's free public instance occasionally 504s under load on an
-// otherwise-valid request (confirmed live: identical request failed, then
-// succeeded seconds later) — one retry meaningfully reduces how often a
-// real nearby beach gets missed due to a momentary server hiccup.
-bool fetchOverpassBeaches(float lat, float lon, JsonDocument& doc) {
-  if (fetchOverpassBeachesOnce(lat, lon, doc)) return true;
-  delay(1000);
-  return fetchOverpassBeachesOnce(lat, lon, doc);
-}
-
-// Step 2: look up named beaches near the step-1 area point. No match (or a
-// failed/slow Overpass request) falls back to saving the area point as-is —
-// deliberately non-blocking, so a real but less-mapped stretch of coast
-// never prevents finishing setup.
-void handleBeaches() {
-  if (!webServer.hasArg("lat") || !webServer.hasArg("lon") || !webServer.hasArg("area")) {
-    webServer.send(400, "text/plain", "Missing params");
-    return;
-  }
-  float lat = webServer.arg("lat").toFloat();
-  float lon = webServer.arg("lon").toFloat();
-  String area = urlDecode(webServer.arg("area"));
-
-  char latStr[16], lonStr[16];
-  snprintf(latStr, sizeof(latStr), "%.4f", lat);
-  snprintf(lonStr, sizeof(lonStr), "%.4f", lon);
-
-  JsonDocument doc;
-  bool ok = fetchOverpassBeaches(lat, lon, doc);
-  JsonArray elements = ok ? doc["elements"].as<JsonArray>() : JsonArray();
-
-  if (!ok || elements.size() == 0) {
-    String page = pageHead(ok ? "No named beach found nearby" : "Beach lookup unavailable");
-    if (!ok) page += "<p>The beach lookup service didn't respond — this can happen occasionally.</p>";
-    page += "<p>Using " + area + " instead.</p>";
-    page += "<a href='/save?lat=" + String(latStr) + "&amp;lon=" + String(lonStr) +
-            "&amp;label=" + urlEncode(area) + "'>Continue with " + area + "</a>";
-    webServer.send(200, "text/html", page);
-    return;
-  }
-
-  String page = pageHead("Beaches near " + area);
-  for (JsonObject el : elements) {
-    String beachName = el["tags"]["name"] | "";
-    if (beachName.length() == 0) continue;
-    // Nodes carry lat/lon directly; ways (polygon beach outlines) carry a
-    // "center" object instead, from the "out center" query modifier.
-    float blat = el["lat"] | el["center"]["lat"] | lat;
-    float blon = el["lon"] | el["center"]["lon"] | lon;
-
-    char blatStr[16], blonStr[16];
-    snprintf(blatStr, sizeof(blatStr), "%.4f", blat);
-    snprintf(blonStr, sizeof(blonStr), "%.4f", blon);
-
-    String label = beachName + ", " + area;
-
-    page += "<a href='/save?lat=" + String(blatStr) + "&amp;lon=" + String(blonStr) +
-            "&amp;label=" + urlEncode(label) + "'>" + beachName + "</a>";
-  }
-  page += "</body></html>";
-
-  webServer.send(200, "text/html", page);
+  webServer.send(200, "text/html", buildPickerPage());
 }
 
 void handleSave() {
-  if (!webServer.hasArg("lat") || !webServer.hasArg("lon") || !webServer.hasArg("label")) {
-    webServer.send(400, "text/plain", "Missing params");
+  if (!webServer.hasArg("i")) {
+    webServer.send(400, "text/plain", "Missing param");
     return;
   }
-  savedLat = webServer.arg("lat").toFloat();
-  savedLon = webServer.arg("lon").toFloat();
-  savedName = urlDecode(webServer.arg("label"));
+  int i = webServer.arg("i").toInt();
+  if (i < 0 || i >= SURF_SPOT_COUNT) {
+    webServer.send(400, "text/plain", "Invalid spot");
+    return;
+  }
+
+  savedLat = SURF_SPOTS[i].lat;
+  savedLon = SURF_SPOTS[i].lon;
+  savedName = SURF_SPOTS[i].name;
 
   prefs.begin("surf", false);
   prefs.putFloat("lat", savedLat);
@@ -526,8 +409,6 @@ void setup() {
   prefs.end();
 
   webServer.on("/", handlePickerRoot);
-  webServer.on("/search", handleSearch);
-  webServer.on("/beaches", handleBeaches);
   webServer.on("/save", handleSave);
   webServer.begin();
 
