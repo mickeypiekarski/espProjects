@@ -236,11 +236,20 @@ void handleSearch() {
 // search on this API takes 40s+ and isn't usable interactively, which is
 // exactly why this step only runs after step 1 has already narrowed things
 // down to a specific city/area.
+// Beaches in OSM are tagged as either point nodes or polygon ways (the
+// outline of the beach area) — many real, named beaches (e.g. Santa
+// Monica-area's "Mother's Beach," "Will Rogers State Beach") only exist as
+// ways. Querying nodes alone silently misses them, so both are queried;
+// "out center" gives each way a single representative lat/lon.
 String buildOverpassQuery(float lat, float lon) {
-  char q[256];
+  char q[320];
   const float DELTA = 0.15f;  // ~10-15mi depending on latitude
   snprintf(q, sizeof(q),
-    "[out:json][timeout:15];node[\"natural\"=\"beach\"][\"name\"](%.4f,%.4f,%.4f,%.4f);out body;",
+    "[out:json][timeout:15];("
+    "node[\"natural\"=\"beach\"][\"name\"](%.4f,%.4f,%.4f,%.4f);"
+    "way[\"natural\"=\"beach\"][\"name\"](%.4f,%.4f,%.4f,%.4f);"
+    ");out center;",
+    lat - DELTA, lon - DELTA, lat + DELTA, lon + DELTA,
     lat - DELTA, lon - DELTA, lat + DELTA, lon + DELTA);
   return String(q);
 }
@@ -308,8 +317,10 @@ void handleBeaches() {
   for (JsonObject el : elements) {
     String beachName = el["tags"]["name"] | "";
     if (beachName.length() == 0) continue;
-    float blat = el["lat"] | lat;
-    float blon = el["lon"] | lon;
+    // Nodes carry lat/lon directly; ways (polygon beach outlines) carry a
+    // "center" object instead, from the "out center" query modifier.
+    float blat = el["lat"] | el["center"]["lat"] | lat;
+    float blon = el["lon"] | el["center"]["lon"] | lon;
 
     char blatStr[16], blonStr[16];
     snprintf(blatStr, sizeof(blatStr), "%.4f", blat);
